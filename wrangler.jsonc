@@ -1,0 +1,30 @@
+{
+  // Cloudflare Worker + Container config. Docs: https://developers.cloudflare.com/containers/
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "wfs",
+  "main": "src/worker/index.js",
+  "compatibility_date": "2025-06-01",
+
+  // The container that runs the FastAPI app (built from ./Dockerfile).
+  "containers": [
+    {
+      "class_name": "Backend",
+      "image": "./Dockerfile",
+      "max_instances": 3
+    }
+  ],
+
+  // Containers are fronted by a Durable Object.
+  "durable_objects": {
+    "bindings": [
+      { "class_name": "Backend", "name": "BACKEND" }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["Backend"]
+    }
+  ]
+}

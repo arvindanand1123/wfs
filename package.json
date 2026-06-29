@@ -1,0 +1,16 @@
+{
+  "name": "wfs-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloudflare Worker that fronts the FastAPI container.",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "^0.0.11"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

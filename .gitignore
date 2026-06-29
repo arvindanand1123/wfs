@@ -1,0 +1,23 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# Env / secrets
+.env
+.envrc.local
+
+# Node / wrangler
+node_modules/
+.wrangler/
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
