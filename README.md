@@ -10,53 +10,7 @@ AWS S3, MinIO, …) via environment variables.
 Internet → Cloudflare edge → Worker (src/worker/index.js) → Container (Dockerfile → uvicorn → FastAPI)
 ```
 
-- **`src/wfs/`** — the FastAPI application (all real logic lives here).
-- **`src/worker/`** — a thin Cloudflare Worker that proxies requests to the
-  container. Required by the Cloudflare Containers model; stays tiny.
-- **`Dockerfile`** — builds the FastAPI image that runs in the container.
-- **`wrangler.jsonc`** — wires the Worker to the container.
-
-## Layout
-
-```
-src/wfs/
-  main.py              # FastAPI app factory + /health
-  config.py            # settings (env-driven)
-  controllers/         # HTTP route handlers
-  core/                # backend-agnostic storage logic
-  models/              # response classes with custom serializers
-src/worker/index.js    # Cloudflare Worker (proxy)
-tests/                 # pytest suite
-scripts/               # setup / dev / test / lint helpers
-```
-
-## Getting started
-
-Requires Python 3.11+, [direnv](https://direnv.net/), [`just`](https://github.com/casey/just),
-and (for deploys) Node + npm. [`uv`](https://docs.astral.sh/uv/) is used if
-present, else stdlib `venv`.
-
-```bash
-direnv allow         # creates & activates .venv automatically on cd
-just setup           # install Python (+ worker) dependencies
-cp .env.example .env # then fill in your S3 backend credentials
-```
-
-The venv is created and activated by **direnv** (`.envrc`). After `direnv allow`,
-the venv activates automatically whenever you `cd` into the project.
-
-## Common commands
-
-```bash
-just            # list all recipes
-just run        # run the API locally with hot reload (:8000)
-just test       # run the test suite (e.g. `just test -k health`)
-just lint       # ruff check + format check
-just fmt        # auto-fix lint + format
-just build      # build the container image locally
-```
-
-Deploys happen automatically via GitHub Actions on push to `main`.
+A thin Cloudflare Worker proxies requests to a container running the FastAPI app.
 
 ## Configuration
 
@@ -71,14 +25,36 @@ Set via environment (see `.env.example`):
 | `S3_BUCKET`            | Target bucket                                |
 | `LOG_LEVEL`            | Log level (default `info`)                   |
 
-## CI/CD
+## Run locally
 
-- **`.github/workflows/ci.yml`** — runs ruff + pytest on every PR and on pushes
-  to `main`.
-- **`.github/workflows/deploy.yml`** — on push to `main` (merged PRs), builds the
-  image and deploys to Cloudflare via `wrangler`.
+Requires Python 3.11+, [direnv](https://direnv.net/), [`just`](https://github.com/casey/just),
+and Node + npm (for `wrangler`). [`uv`](https://docs.astral.sh/uv/) is used if
+present, else stdlib `venv`.
 
-Add these GitHub repo secrets for deploys:
+```bash
+direnv allow         # creates & activates .venv automatically on cd
+just setup           # install dependencies
+cp .env.example .env # then fill in your S3 backend credentials
+just run             # serve on http://localhost:8000
+```
 
-- `CLOUDFLARE_API_TOKEN`
-- `CLOUDFLARE_ACCOUNT_ID`
+Other recipes: `just test`, `just lint`, `just fmt`, `just build`. Run `just` to
+list them all.
+
+## Deploy to Cloudflare
+
+This repo deploys as a [Cloudflare Container](https://developers.cloudflare.com/containers/).
+Two options:
+
+**One-off / manual:**
+
+```bash
+just deploy
+```
+
+**Connect the repo (auto-deploys on push):** in the Cloudflare dashboard, create
+a Worker from your Git repo. Cloudflare builds the `Dockerfile` and deploys using
+`wrangler.jsonc` on every push — no GitHub Actions or secrets needed.
+
+Set the S3 environment variables (above) on the Worker via the dashboard or
+`wrangler secret put`.

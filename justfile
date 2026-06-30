@@ -43,3 +43,7 @@ fmt:
 # Build the container image locally (sanity check before deploy).
 build:
     docker build -t wfs:local .
+
+# Deploy to Cloudflare (needs wrangler auth).
+deploy:
+    npx wrangler deploy
