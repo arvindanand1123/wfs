@@ -89,8 +89,6 @@ class BaseSerializer:
                 else:
                     raise ValidationError(msg)
 
-
-
     def has_default(self):
         return self.default is not ABSENT
 
