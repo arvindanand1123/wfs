@@ -16,7 +16,7 @@ def create_app():
 
     @app.get("/health", tags=["meta"])
     def health():
-        return {"status": "ok", "version": __version__}
+        return dict(status="ok", version=__version__)
 
     app.include_router(objects.router)
     return app

@@ -245,7 +245,7 @@ class DictSerializer(BaseSerializer):
         return True, None
 
     def _serialize_primitive_only(self, value):
-        out = {}
+        out = dict()
         for name, ser in self.fields.items():
             if ser.write_only:
                 continue
@@ -254,7 +254,7 @@ class DictSerializer(BaseSerializer):
         return out
 
     def _deserialize_primitive_only(self, value):
-        out = {}
+        out = dict()
         for name, ser in self.fields.items():
             if ser.read_only:
                 continue
