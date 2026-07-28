@@ -120,3 +120,68 @@ not flag `dict(bar=1)` or a plain `{"bar": 1}` literal. It never rewrites a
 Out of scope (this rule does not apply): **set literals** (`{"a", "b"}` — a set,
 not a dict) and **dict comprehensions** (`{k: v for ...}` — no `dict()`-callable
 equivalent that preserves the comprehension). Do not flag these.
+
+## R002 — No explicit tests for drivers; drivers are tested implicitly
+
+**Tier:** 3 (this file — unenforced by tooling)
+
+Do not write tests whose *subject* is the driver layer (`src/wfs/drivers/`). No
+dedicated driver test modules (e.g., `tests/test_s3_driver.py`) and no test
+functions that construct a driver, mock the vendor SDK underneath it, and assert
+on the driver's calls into that SDK. Drivers are covered *implicitly*: by
+higher-layer tests (controller/endpoint tests that pass through the driver) and,
+where real credentials are available, by exercising the app against a live
+backend.
+
+```python
+# bad — the test's subject IS the driver: mocks the vendor SDK, asserts on it
+def test_upload_file_sets_content_type():
+    driver = S3Driver(settings)
+    driver._client = MagicMock()          # mock boto3 under the driver
+    driver.upload_file("k", b"data", content_type="text/plain")
+    driver._client.upload_fileobj.assert_called_once()
+
+# good — the test's subject is the ENDPOINT; the driver is a stubbed dependency
+def test_upload_endpoint_stores_object():
+    app = create_app()
+    fake = MagicMock()
+    app.dependency_overrides[get_driver] = lambda: fake
+    resp = TestClient(app).put("/objects/k", content=b"data")
+    assert resp.status_code == 201
+    fake.upload_file.assert_called_once()
+```
+
+**Rationale:** The driver layer is a deliberately thin wrapper over a vendor API
+(boto3/S3). An explicit unit test for it must mock the vendor SDK, at which point
+the test asserts that the mock was called the way the implementation calls it —
+it restates the implementation and verifies nothing about real behavior. The
+driver's correctness is only meaningful against the real backend, which
+higher-layer flows exercise. Stated by the repo owner. Precedent: an explicit
+`tests/test_s3_driver.py` existed briefly and was deleted; the driver's
+test-injection constructor seam (`client=None`) was removed at the same time —
+do not reintroduce either.
+
+**Why tier 3 (no tool enforces this):** No ruff rule can express "a test module
+may not target this package." The plausible tier-2 encoding — a semgrep rule
+flagging `from wfs.drivers... import ...` / `import wfs.drivers...` inside
+`tests/` — is a false-positive generator, verified on fixtures: a *forbidden*
+explicit driver test and an *allowed* endpoint test both contain the identical
+line `from wfs.drivers.s3 import get_driver` (the allowed test needs the symbol
+as the key for `app.dependency_overrides[get_driver]`). The rule turns on what a
+test *exercises and asserts on*, not on what it imports — a semantic distinction
+no import- or path-based pattern can draw. Filename-based patterns
+(`tests/test_*driver*`) fail the same way in both directions: trivially evadable
+by renaming, and wrong on a legitimately named higher-layer file.
+
+**Allowed** — none of these are "explicit driver tests":
+
+1. **Overriding the driver as a dependency** of the layer under test —
+   `app.dependency_overrides[get_driver] = ...`,
+   `monkeypatch.setattr("wfs.drivers.s3.get_driver", ...)`, or passing a stub
+   driver into higher-layer code. Importing driver symbols (`get_driver`,
+   `S3Driver`) for this purpose is fine.
+2. **Higher-layer tests** (controllers, services) that pass through real driver
+   code as a side effect of exercising their own subject.
+3. **Asserting on a stub driver's received calls** from a higher-layer test
+   (e.g., `fake.upload_file.assert_called_once()`) — the assertion's subject is
+   the caller, not the driver.
