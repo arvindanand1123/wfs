@@ -32,6 +32,10 @@ addopts = "-ra -q"
 line-length = 200
 target-version = "py311"
 src = ["src", "tests"]
+# ruff >=0.16 formats Python code blocks embedded in Markdown by default.
+# AGENTS.md's examples are hand-aligned on purpose (including deliberately
+# non-conforming "bad" examples), so keep the formatter out of the docs.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 # E/W pycodestyle, F pyflakes, I isort, UP pyupgrade, B bugbear, SIM simplify
