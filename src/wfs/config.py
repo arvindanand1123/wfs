@@ -1,5 +1,5 @@
 import os
-from functools import lru_cache
+from functools import cache
 
 
 class Settings:
@@ -12,6 +12,6 @@ class Settings:
         self.log_level = os.getenv("LOG_LEVEL", "info")
 
 
-@lru_cache
+@cache
 def get_settings():
     return Settings()
