@@ -1,12 +1,11 @@
-"""Shared pytest fixtures."""
-
 import pytest
-from fastapi.testclient import TestClient
 
-from wfs.main import create_app
+from tests.externals.client import ExternalClient
 
 
 @pytest.fixture
 def client():
-    """A test client wired to the app in-process (no network)."""
-    return TestClient(create_app())
+    # A returned fixture has no teardown phase, so the mocks' os.environ patch
+    # would never be reverted and would follow every later test in the process.
+    with ExternalClient() as external_client:
+        yield external_client

@@ -185,3 +185,145 @@ by renaming, and wrong on a legitimately named higher-layer file.
 3. **Asserting on a stub driver's received calls** from a higher-layer test
    (e.g., `fake.upload_file.assert_called_once()`) — the assertion's subject is
    the caller, not the driver.
+
+## R003 — Do not comment what the code already says; comment only a non-obvious *why*
+
+**Tier:** 3 (this file — unenforced by tooling)
+
+A comment must carry information the code cannot. Do not write a comment that
+restates what the adjacent line already says — a comment like that is noise, and
+noise costs the next reader attention while teaching them nothing. A comment is
+warranted in exactly two cases:
+
+1. It explains a non-obvious **why** — a constraint, a gotcha, or the reason a
+   surprising line is correct.
+2. The repo owner **explicitly asked** for a comment.
+
+Absent both, write no comment. The default is silence, not narration.
+
+```python
+# good — states an external constraint the code cannot (src/wfs/drivers/s3.py)
+self._client = boto3.client(
+    "s3",
+    region_name=settings.s3_region,
+    # R2 only accepts SigV4-signed requests.
+    config=Config(signature_version="s3v4"),
+)
+
+# good — names the gotcha that makes a surprising line correct
+# (src/wfs/models/serializers.py). Nothing in the code says why `bool` is
+# singled out; the reader would otherwise read the check as redundant.
+# bool is a subclass of int; reject it explicitly.
+if isinstance(value, bool) or not isinstance(value, int):
+    return False, f"expected an integer, got {type(value).__name__}"
+
+# bad — restates the line verbatim
+# Increment the counter by one.
+counter += 1
+
+# bad — restates the name and the annotation
+# The bucket name.
+bucket: str = "wfs"
+
+# bad — narrates control flow the reader can already see
+# Loop over the items.
+for item in settings.items:
+    ...
+
+# bad — labels the mechanics without giving the reason. `type(self)` already
+# says "class attribute"; the comment never says why class level is required.
+# class attribute, not instance level
+schema = type(self).schema
+```
+
+Compliance is not always deletion. When a redundant comment sits on a line that
+*does* have a non-obvious reason behind it, the fix is to replace the restatement
+with that reason. When there is no such reason, delete it.
+
+**Rationale:** A comment that paraphrases its own line adds a second thing to
+read and a second thing to keep true when the code changes — it decays into a
+lie the moment the line is edited, and the reader must diff prose against code
+to notice. Comments earn their place only by saying something the code cannot:
+why a constraint exists, why an odd line is right. Stated by the repo owner ("do
+not add comments to things that explain themselves or unless explicitly told").
+This is a preference about what belongs in the source, not a correctness claim.
+
+**Why tier 3 (no tool enforces this):** The predicate is "this prose is
+redundant with the adjacent code," which requires reading English against Python
+and judging whether the former adds information. No lint can do this, and the
+second clause — "unless explicitly told" — is strictly worse: it turns on
+whether the repo owner asked for the comment, a fact that exists nowhere in the
+source tree and is unavailable to any checker in principle.
+
+Verified against ruff 0.16.0 (the installed version; note R001's evidence was
+gathered under 0.15.20). Searching all **968** rules — names, summaries, and
+explanations — for "comment" returns nothing about redundancy. Every
+comment-aware rule is lexical or syntactic:
+
+- `ERA001` commented-out-code — commented-out *code*, not redundant prose
+- `PLR2044` empty-comment — a `#` with nothing after it
+- `E261`/`E262`/`E265`/`E266` — spacing and `#` count
+- `RUF003` — ambiguous Unicode inside a comment
+- `TD001`–`TD007`, `FIX001`–`FIX004` — `TODO`/`FIXME` tag hygiene
+
+Run with `--select ALL` (all 968 rules) on a fixture holding six redundant
+comments, ruff reports **zero** diagnostics against any comment — only unrelated
+`D100`/`D103` (missing docstrings), `ANN001`/`ANN201`, `CPY001`, `INP001`, and
+`F821`. Not one diagnostic points at a comment.
+
+`ERA001` is the closest rule and is **not** a substitute: on fixtures it flags
+`# client.timeout = 30` and `# return None` (commented-out code) while passing
+clean over both `# Increment the counter by one.` and the legitimate `# R2 only
+accepts SigV4-signed requests.`. The two rules are disjoint — R003 is about
+prose that restates code, `ERA001` about code hiding in a comment.
+
+Tier 2 is no better. Comments are not AST nodes, so a semgrep `pattern` cannot
+address them at all; only `pattern-regex` over raw text can, and both candidate
+encodings fail, verified by simulating them with `grep` over the real tree:
+
+- **Flag every non-directive comment** — 7 matches in `src/` and `tests/`, of
+  which 6 are load-bearing and legal under this rule. An ~86% false-positive
+  rate on exactly the comments the rule exists to protect.
+- **Blocklist English phrasings** (`# Create the`, `# Return the`, …) — catches
+  4 of 6 redundant comments in the fixture, missing `# The bucket name.` and
+  `# Skip empty items.`, and is evaded by rewording. It would also fire on a
+  legitimate *why* that happens to open with a blocklisted verb.
+
+`ERA001` **is compatible and may be enabled.** It targets a disjoint,
+machine-checkable subset (commented-out code), does not overlap the currently
+selected `E`/`W`/`F`/`I`/`UP`/`B`/`SIM`, and `ruff check --select ERA src tests`
+passes clean on the tree today — so adopting it would add no violations. It
+enforces a *neighbouring* rule, never this one.
+
+**Exceptions** — must NOT be deleted or rewritten as R003 violations:
+
+1. **Docstrings are out of scope.** A `"""..."""` is not a comment; R003 says
+   nothing about docstring content, including docstrings that restate a
+   signature. Present today in `src/wfs/main.py`,
+   `src/wfs/models/serializers.py`, and `tests/externals/s3.py`.
+2. **Functional directives are not explanatory prose.** `# noqa` /
+   `# noqa: RULE`, `# ruff: noqa`, `# type: ignore`, `# pyright: ignore[...]`,
+   `# nosemgrep`, and formatter pragmas (`# fmt: off`/`# fmt: on`) are
+   instructions read by tools, not comments about code. They are already
+   protected by the *Ignore directives* section above. (Currently zero occur in
+   `src/` or `tests/`; this exception is forward-looking.)
+3. **License and copyright headers in vendored third-party code** must be
+   preserved verbatim for legal reasons, regardless of whether they explain
+   anything. (No vendored directory exists in the repo today; forward-looking.)
+4. **Comments that decode an opaque token** carry information the code cannot,
+   even when they look like a restatement. `pyproject.toml`'s
+   `# E/W pycodestyle, F pyflakes, I isort, UP pyupgrade, B bugbear, SIM simplify`
+   expands lint codes that are meaningless on sight; the `extend-exclude` note
+   above it explains why the formatter is kept out of the docs. Both are legal.
+5. **The existing load-bearing comments in this repo**, cited by text rather
+   than line number because they move:
+   - `src/wfs/drivers/s3.py` — "R2 only accepts SigV4-signed requests."
+     (external constraint; nothing in the code states it)
+   - `src/wfs/models/serializers.py` — "bool is a subclass of int; reject it
+     explicitly." (gotcha; the check reads as redundant without it)
+   - `tests/externals/client.py` — "TestClient.`__exit__` overrides httpx's and
+     never calls close(), so both teardown paths have to be hooked separately."
+     (upstream behaviour that justifies a surprising teardown)
+   - `tests/externals/s3.py` — "get_settings and get_driver are lru_cache'd, so
+     a driver built under one test's env would otherwise outlive it." (explains
+     why the cache clearing exists at all)

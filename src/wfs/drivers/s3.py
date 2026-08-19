@@ -1,5 +1,5 @@
 import io
-from functools import lru_cache
+from functools import cache
 
 import boto3
 from botocore.config import Config
@@ -36,6 +36,6 @@ class S3Driver:
         )
 
 
-@lru_cache
+@cache
 def get_driver():
     return S3Driver(get_settings())
