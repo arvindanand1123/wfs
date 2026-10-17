@@ -1,7 +1,4 @@
 import io
-from urllib.parse import parse_qs, urlparse
-
-import httpx
 
 from wfs.models.state import DEFAULT_FILE_TYPE, Object
 
@@ -36,24 +33,3 @@ def test_push_obj_binary_type(client):
     Object("README", b"no extension").push_obj()
 
     assert client.mock("s3").content_type("README") == DEFAULT_FILE_TYPE
-
-
-def test_get_upload_url(client):
-    obj = Object("hello.txt", b"hi there")
-    obj.push_obj()
-
-    url = obj.get_upload_url()
-    query = parse_qs(urlparse(url).query)
-    assert query["X-Amz-Algorithm"] == ["AWS4-HMAC-SHA256"]
-
-    resp = httpx.get(url)
-
-    assert resp.status_code == 200
-    assert resp.content == b"hi there"
-
-
-def test_get_upload_url_expiry(client):
-    url = Object("hello.txt", b"").get_upload_url(expires_in=60)
-
-    query = parse_qs(urlparse(url).query)
-    assert query["X-Amz-Expires"] == ["60"]

@@ -4,21 +4,31 @@ Run locally:  uvicorn wfs.main:app --reload
 In container:  uvicorn wfs.main:app --host 0.0.0.0 --port 8000
 """
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from wfs import __version__
-from wfs.controllers import objects
+from wfs.controllers import auth, files
+from wfs.models.state import get_keypair
+
+
+@asynccontextmanager
+async def lifespan(app):
+    get_keypair()
+    yield
 
 
 def create_app():
     """App factory. Keeps wiring in one place and makes testing easy."""
-    app = FastAPI(title="wfs", version=__version__)
+    app = FastAPI(title="wfs", version=__version__, lifespan=lifespan)
 
     @app.get("/health", tags=["meta"])
     def health():
         return dict(status="ok", version=__version__)
 
-    app.include_router(objects.router)
+    app.include_router(auth.router)
+    app.include_router(files.router)
     return app
 
 
