@@ -324,6 +324,6 @@ enforces a *neighbouring* rule, never this one.
    - `tests/externals/client.py` — "TestClient.`__exit__` overrides httpx's and
      never calls close(), so both teardown paths have to be hooked separately."
      (upstream behaviour that justifies a surprising teardown)
-   - `tests/externals/s3.py` — "get_settings and get_driver are lru_cache'd, so
-     a driver built under one test's env would otherwise outlive it." (explains
-     why the cache clearing exists at all)
+   - `tests/externals/s3.py` — "get_settings, get_driver and get_keypair are
+     lru_cache'd, so a driver or keypair built under one test's env would
+     otherwise outlive it." (explains why the cache clearing exists at all)

@@ -10,6 +10,7 @@ from moto.server import ThreadedMotoServer
 from tests.externals.base import ExternalMock
 from wfs.config import get_settings
 from wfs.drivers.s3 import get_driver
+from wfs.models.state import get_keypair
 
 CREDENTIALS = dict(aws_access_key_id="testing", aws_secret_access_key="testing", region_name="us-east-1")
 
@@ -70,7 +71,8 @@ class S3Mock(ExternalMock):
 
     @staticmethod
     def _clear_caches():
-        # get_settings and get_driver are lru_cache'd, so a driver built under
-        # one test's env would otherwise outlive it.
+        # get_settings, get_driver and get_keypair are lru_cache'd, so a driver
+        # or keypair built under one test's env would otherwise outlive it.
         get_settings.cache_clear()
         get_driver.cache_clear()
+        get_keypair.cache_clear()

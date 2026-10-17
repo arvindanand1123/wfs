@@ -10,6 +10,10 @@ class Settings:
         self.s3_region = os.getenv("S3_REGION", "auto")
         self.s3_bucket = os.getenv("S3_BUCKET", "")
         self.log_level = os.getenv("LOG_LEVEL", "info")
+        self.private_key_name = os.getenv("PRIVATE_KEY_NAME", "keys/pk.pem")
+        self.public_key_name = os.getenv("PUBLIC_KEY_NAME", "keys/pub.pem")
+        self.jwt_issuer = os.getenv("JWT_ISSUER", "wfs")
+        self.jwt_ttl = int(os.getenv("JWT_TTL", "3600"))
 
 
 @cache

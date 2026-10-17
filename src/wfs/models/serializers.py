@@ -288,3 +288,20 @@ class ObjectSerializer(BaseSerializer):
         etag=F.string(null=True, read_only=True),
         last_modified=F.string(null=True, read_only=True),
     )
+
+
+class TokenSerializer(BaseSerializer):
+    schema = F.dict(
+        access_token=F.string(),
+        token_type=F.string(default="bearer"),
+        expires_in=F.integer(),
+    )
+
+
+class SignedUrlSerializer(BaseSerializer):
+    schema = F.dict(
+        filename=F.string(),
+        method=F.string(),
+        url=F.string(),
+        expires_in=F.integer(),
+    )

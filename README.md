@@ -24,6 +24,42 @@ Set via environment (see `.env.example`):
 | `S3_REGION`            | Region (`auto` for R2)                       |
 | `S3_BUCKET`            | Target bucket                                |
 | `LOG_LEVEL`            | Log level (default `info`)                   |
+| `PRIVATE_KEY_NAME`     | Private key object name (default `keys/pk.pem`) |
+| `PUBLIC_KEY_NAME`      | Public key object name (default `keys/pub.pem`) |
+| `JWT_ISSUER`           | JWT `iss` claim (default `wfs`)              |
+| `JWT_TTL`              | Token lifetime in seconds (default `3600`)   |
+
+## Auth
+
+On boot the container looks for `PRIVATE_KEY_NAME` / `PUBLIC_KEY_NAME` in the
+bucket and generates an RSA keypair into it if either is missing, so a fresh
+deploy against a fresh bucket is self-bootstrapping and a redeploy against an
+existing one keeps issuing tokens the old keys can still verify.
+
+Clients hold the public key. `POST /login` takes it as the bearer credential and
+returns a short-lived RS256 JWT signed with the private key; every other
+endpoint takes that JWT as the bearer. An HTTP header cannot carry a PEM's
+newlines, so send the key flattened — whitespace-collapsed PEM, base64-wrapped
+PEM, and a bare base64 body are all accepted.
+
+```bash
+TOKEN=$(curl -sX POST localhost:8000/login \
+  -H "Authorization: Bearer $(tr '\n' ' ' < pub.pem)" | jq -r .access_token)
+
+curl -s "localhost:8000/files/get-signed-url?filename=a/b.pdf&method=put" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## API
+
+| Endpoint                | Description                                          |
+| ----------------------- | ---------------------------------------------------- |
+| `GET /health`           | Liveness probe.                                      |
+| `POST /login`           | Public key in, JWT out.                              |
+| `GET /files/get-signed-url` | Presigned S3 URL for `filename`. `method=get\|put` (default `get`), `expires_in` seconds (default 3600, max 604800). |
+
+The gateway never proxies file bytes: clients upload and download directly
+against the presigned URL.
 
 ## Run locally
 

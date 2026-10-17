@@ -3,8 +3,11 @@ from functools import cache
 
 import boto3
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
 from wfs.config import get_settings
+
+MISSING_ERROR_CODES = {"404", "NoSuchKey", "NoSuchBucket"}
 
 
 class S3Driver:
@@ -28,12 +31,33 @@ class S3Driver:
             extra_args["ContentType"] = content_type
         self._client.upload_fileobj(data, self._bucket, key, ExtraArgs=extra_args)
 
-    def generate_url(self, key, expires_in=3600):
+    def download_file(self, key):
+        try:
+            return self._client.get_object(Bucket=self._bucket, Key=key)["Body"].read()
+        except ClientError as e:
+            if self._is_missing(e):
+                return None
+            raise
+
+    def file_exists(self, key):
+        try:
+            self._client.head_object(Bucket=self._bucket, Key=key)
+        except ClientError as e:
+            if self._is_missing(e):
+                return False
+            raise
+        return True
+
+    def generate_url(self, key, expires_in=3600, client_method="get_object"):
         return self._client.generate_presigned_url(
-            "get_object",
+            client_method,
             Params=dict(Bucket=self._bucket, Key=key),
             ExpiresIn=expires_in,
         )
+
+    @staticmethod
+    def _is_missing(error):
+        return str(error.response.get("Error", dict()).get("Code")) in MISSING_ERROR_CODES
 
 
 @cache
