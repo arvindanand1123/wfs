@@ -327,3 +327,191 @@ enforces a *neighbouring* rule, never this one.
    - `tests/externals/s3.py` — "get_settings, get_driver and get_keypair are
      lru_cache'd, so a driver or keypair built under one test's env would
      otherwise outlive it." (explains why the cache clearing exists at all)
+
+## R004 — Test at the highest layer that can reach the behaviour, and test it there only
+
+**Tier:** 3 (this file — unenforced by tooling)
+
+A new test goes through the HTTP API, using the `client` fixture from
+`tests/conftest.py` (which yields `tests/externals/client.ExternalClient`: the
+real app from `create_app()`, wired to the real S3 mock). Everything the request
+passes through — controllers, dependencies, state models, serializers, drivers —
+is covered *implicitly* by that flow. Four clauses:
+
+1. **Highest layer.** Write the test at the outermost layer that can exercise
+   the behaviour. Reaching into an inner layer (calling `Object(...).push_obj()`
+   and asserting on the result, deserializing a field by hand) is a violation
+   when an endpoint exists that reaches the same code.
+2. **Minimal.** Test the behaviour that matters — the happy path and the
+   failures a caller can actually provoke. Do not enumerate cases. Three
+   `expires_in` values that exercise one branch are one test, not three.
+3. **No re-testing a covered layer.** If a flow already passes through a layer,
+   that layer does not get its own test. **R002 is the narrow, absolute special
+   case of this clause**: drivers get *no* explicit tests, ever, with no
+   grandfathering and no "the endpoint cannot reach it" escape. R004 generalises
+   the same reasoning to state models and serializers, where it is a default
+   with the exceptions listed below rather than a prohibition. Where the two
+   overlap, R002 governs.
+4. **House style.** Plain `def test_x(client):` functions at module scope. No
+   `unittest.TestCase`, no test classes, no mocks or patches of internal wfs
+   code. Assert on the response (`resp.status_code`, `resp.json()`) and, where
+   the effect is external, on the S3 mock via `client.mock("s3")`. Shared setup
+   is a fixture in `tests/conftest.py` (`public_key`, `token`); shared helpers
+   live in `tests/utils/`.
+
+```python
+# good — subject is the endpoint; state, serializer and driver ride along
+# (tests/test_auth.py)
+def test_login_issues_a_token(client, public_key):
+    resp = client.post("/login", headers=AuthUtils.bearer(public_key))
+
+    assert resp.status_code == 200
+    assert resp.json()["token_type"] == "bearer"
+    assert resp.json()["expires_in"] == get_settings().jwt_ttl
+
+# good — an inner-layer call used to ARRANGE; the assertion is on the response
+def test_get_signed_url_returns_a_working_url(client, token):
+    Object("hello.txt", b"hi there").push_obj()
+
+    resp = client.get("/files/get-signed-url", params=dict(filename="hello.txt"), headers=AuthUtils.bearer(token))
+
+    assert resp.status_code == 200
+    assert httpx.get(resp.json()["url"]).content == b"hi there"
+
+# bad — subject is the state model, though GET /files/get-signed-url reaches it
+def test_get_signed_url_expiry(client):
+    url = Object("hello.txt", b"").get_signed_url(expires_in=60)
+    assert parse_qs(urlparse(url).query)["X-Amz-Expires"] == ["60"]
+
+# bad — re-tests the serializer layer that every endpoint response already
+# passes through
+def test_token_serializer_shape():
+    assert TokenSerializer().serialize(dict(access_token="t", expires_in=1)) == dict(access_token="t", token_type="bearer", expires_in=1)
+
+# bad — enumeration. One test covers the branch; the other two cover nothing.
+def test_expires_in_rejects_0(client, token): ...
+def test_expires_in_rejects_negative(client, token): ...
+def test_expires_in_rejects_too_large(client, token): ...
+
+# bad — unittest class, and patches internal wfs code instead of driving the app
+class TestSignedUrl(unittest.TestCase):
+    @mock.patch("wfs.models.state.objects.Object.get_signed_url")
+    def test_url(self, fake):
+        ...
+```
+
+**Rationale:** Stated by the repo owner, verbatim: "When you write tests, write
+them in the style that we've already established. Minimally test the behavior
+that's important. Don't retest layers that have already been tested. Also, test
+as e2e as possible — this way lower layers are implicitly tested." A test that
+reaches into an inner layer asserts that the layer behaves as written rather
+than that the product behaves as promised: it survives refactors that break the
+app and breaks on refactors that keep it working. The `ExternalClient` +
+moto-backed S3 mock makes the outermost layer cheap enough that there is no
+speed argument for testing underneath it. Duplicated coverage is not free —
+every extra test is another thing to update when the shape of a layer changes,
+and it buys no signal the outer test did not already give.
+
+**Why tier 3 (no tool enforces this):** The predicate is "some other test
+already covers this code path, at a higher layer" — a property of the *suite as
+a whole*, not of any file, node or import. Nothing in a single test's syntax
+distinguishes a compliant test from a violating one. Verified, ruff 0.16.0:
+
+- Searching all **968** rules (names, summaries, explanations) for
+  end-to-end/integration/layer/duplicate-test wording returns nothing relevant —
+  only `PT014` (duplicate `parametrize` *cases*), two Airflow upgrade rules and
+  two docstring rules matching on the word "test".
+- Run with `--select ALL` (968 rules) on two fixtures — a compliant endpoint
+  test and a violating state-model test with identical assertions — ruff returns
+  the *same* set of unrelated diagnostics for both (`INP001`, `D100`, `CPY001`,
+  `ANN001`/`ANN201`, `D103`, `S101`). The only diagnostic that differs is
+  `PLR2004` (magic value `201`), and it fires on the **compliant** test. No rule
+  separates them, and the one that tells them apart points the wrong way.
+
+The one mechanically expressible candidate is `TID251` banned-api — ban
+`wfs.models.state` / `wfs.models.serializers` and rely on `per-file-ignores` to
+exempt `src/`. Verified with a real ruff config on real fixtures, and it fails
+in both directions:
+
+- **False positives.** The violating fixture and the *allowed* arrange-only
+  fixture above open with the identical line `from wfs.models.state import
+  Object`; `TID251` flags both, one error each. The rule turns on what the test
+  *asserts on*, which no import can express — the same failure R002 documents
+  for `wfs.drivers`.
+- **It fires inside the app.** 9 of its 13 hits on the current tree are in `src/`
+  (`controllers/auth.py`, `controllers/files.py`, `controllers/deps.py`,
+  `main.py`, `models/state/__init__.py`, `models/state/keys.py`) — production
+  code importing its own modules. Suppressing them means a blanket
+  `per-file-ignores` for `src/**`, so the ban is enforced only by path.
+- **It fires on test infrastructure, and on nothing actionable.** All 4 of its
+  hits under `tests/` are legal: `tests/externals/s3.py` (`from wfs.models.state
+  import get_keypair`, needed to clear the `lru_cache` between tests, Exception
+  3), `tests/test_auth.py` (a compliant endpoint test importing `get_keypair`
+  only to simulate a restart, Exception 4), and the two files this rule exempts
+  outright (Exceptions 1 and 2). Zero true positives, four false ones.
+
+Tier 2 is no better, and would cost a new dependency (`semgrep` is not installed;
+adopting it means adding it to `[project.optional-dependencies] dev` and to
+`.github/workflows/ci.yml`). Two candidate patterns, both rejected on evidence:
+
+- **Import-based** (`pattern: from wfs.models... import ...` under `paths.include:
+  ["tests/"]`) — mechanically identical to the `TID251` run above, so it inherits
+  every false positive proven there.
+- **Behavioural** — flag a test that does not call an HTTP method on `client`.
+  Simulated exactly, with an AST scan over `tests/`: on the tree at the time this
+  rule was written it flags **23 of 29** test functions and **not one actionable
+  violation**. 19 of the 23 are the two modules this rule explicitly exempts
+  (Exceptions 1 and 2); the remaining 4 are fully compliant endpoint tests —
+  `tests/test_files.py`'s three tests reach the API through the module-level
+  `signed_url(client, token, ...)` helper, so the HTTP call is one frame away
+  from the test body, and `test_keys_are_generated_on_startup` asserts on a
+  startup effect via `client.mock("s3")` with no request at all. Any pattern
+  that follows a helper call is a call-graph analysis, which semgrep is not.
+
+Clauses 2 and 3 are worse still: "test only what matters" and "do not re-test a
+covered layer" are judgments about the *set* of tests relative to the rest of
+the suite and to what the endpoints do. No pattern language addresses a set.
+
+**`PT` (flake8-pytest-style) is compatible and may be enabled.** It mechanically
+covers a small, disjoint corner of clause 4: `PT009` flags `self.assertEqual`
+and `PT027` flags `self.assertRaises`, verified on a fixture. `ruff check
+--select PT tests` passes clean on the tree today, so adopting it would add no
+violations. It is **not** a substitute — verified: a `class TestSignedUrl:` with
+plain `assert` statements (a clause-4 violation) passes `PT` clean, and `PT` is
+silent on every other clause. Note that if `PT` is ever adopted, the `C4` ban in
+R001 still stands: `--select ALL` on that same class fixture reports `C408`
+against `params=dict(filename="a.txt")`, which R001 forbids fixing.
+
+**Exceptions** — must NOT be deleted or rewritten as R004 violations:
+
+1. **`tests/test_serializers.py` — permanent exception.**
+   `src/wfs/models/serializers.py` is a general-purpose framework, not
+   application code: `null`/`default`/`required`/`read_only`/`write_only`
+   semantics, type coercion, nesting, and `ValidationError` paths exist
+   independently of any endpoint, and most are unreachable through HTTP (no
+   route serializes a `F.float()`, and `F.boolean().deserialize("maybe")` has no
+   URL). Its unit tests stay, and new framework behaviour may be tested there.
+   The exception is bounded to the *framework*: a concrete response shape
+   (`TokenSerializer`, `SignedUrlSerializer`, `ObjectSerializer`) is asserted at
+   the endpoint that returns it, not here.
+2. **`tests/test_state.py` — grandfathered.** It predates this rule and reaches
+   into `wfs.models.state` directly. The Custodian must **not** delete it,
+   rewrite it, or migrate its assertions to endpoint tests. Migration is a
+   deliberate change made by the repo owner, in the PR that adds the equivalent
+   endpoint coverage; until then the file stands as written. R004 governs *new*
+   tests. Grandfathering does not extend to adding tests to this file: a new
+   state-layer test is a violation even in a grandfathered module.
+3. **Test infrastructure is not a test.** `tests/conftest.py`,
+   `tests/externals/`, and `tests/utils/` may import and call anything in `wfs`
+   — `get_settings`, `get_driver`, `get_keypair`, `Object` — to build fixtures,
+   mocks, and cache teardown. They assert on nothing and are out of scope.
+4. **Inner layers used to *arrange* are allowed.** Seeding state before the
+   request under test (`Object("hello.txt", b"hi").push_obj()`) or clearing a
+   cache to simulate a restart (`get_keypair.cache_clear()`) is setup, not
+   subject. The test complies as long as the act is an HTTP call and the
+   assertions are on the response or on the observable external effect.
+5. **Behaviour genuinely unreachable through HTTP** may be tested one layer
+   down, at the highest layer that can reach it — but only after checking that
+   no endpoint reaches it, and the test must say why in a comment (a legitimate
+   non-obvious *why* under R003). This is a narrow escape hatch, not a default,
+   and it never applies to `src/wfs/drivers/` (R002).
